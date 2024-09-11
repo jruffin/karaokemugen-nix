@@ -2,12 +2,12 @@ let
   pname = "karaoke-mugen";
   version = "8.0.10";
 
-  pkgs = import <nixpkgs> {};
-  nixgl = import ./nixGL {};
+  pkgs = import <nixpkgs> { };
+  nixgl = import ./nixGL { };
   stdenv = pkgs.stdenv;
   lib = pkgs.lib;
-/*
-  karaoke = pkgs.mkYarnPackage {
+  /*
+    karaoke = pkgs.mkYarnPackage {
     name = "${pname}-${version}";
     src = pkgs.fetchFromGitLab {
       owner = "karaokemugen";
@@ -30,170 +30,318 @@ let
 
     installPhase = ''mv -T deps/ulauncher-prefs/dist $out'';
     distPhase = "true";
+    };
+  */
+  sources = pkgs.fetchFromGitLab {
+    owner = "karaokemugen";
+    repo = "code/karaokemugen-app";
+    rev = version;
+    fetchSubmodules = true;
+    hash = "sha256-KDRaGgvVHqyUVvOT9WlLd1ZAt1kJ9GWsD5ZedRrifZs=";
   };
-*/
-  src = pkgs.fetchFromGitLab {
-	owner = "karaokemugen";
-	repo = "code/karaokemugen-app";
-	rev = version;
-	fetchSubmodules = true;
-	hash = "sha256-KDRaGgvVHqyUVvOT9WlLd1ZAt1kJ9GWsD5ZedRrifZs=";
-  };
-
-  #kmfrontend = pkgs.mkYarnPackage {
-#	name = "${pname}-kmfrontend";
-#	inherit version;
-#	src = "${repo}/kmfrontend";
-#  };
-
-#  karaoke = pkgs.mkYarnPackage {
-#	inherit pname version;
-#
-#	src = repo;
-#
-#	patchPhase = ''
-#	  mv portable notportable
-#	  '';
-
-#	yarnPostBuild = ''
-#	  pwd
-#	  ls -la
-#	  yarn installkmfrontend --offline
-#	  yarn buildkmfrontend --offline
-
-#	workspaceDependencies = [
-#	  kmfrontend
-#	];
-
-    #installPhase = ''mv -T deps/ulauncher-prefs/dist $out'';
-    #distPhase = "true";
-#  };
 
   extraNodePackages = stdenv.mkDerivation rec {
-	name = "${pname}-extra-nodePackages";
-	src = ./.;
+    name = "${pname}-extra-nodePackages";
+    src = ./.;
 
-	unpackPhase = ''
-	  echo '[ "electron-builder" ]' > package.json
-	'';
+    unpackPhase = ''
+      	  echo '[ "electron-builder" ]' > package.json
+      	'';
 
-	buildInputs = with pkgs; [
-	  cacert
-	  nodePackages.node2nix
-	];
+    buildInputs = with pkgs; [
+      cacert
+      nodePackages.node2nix
+    ];
 
-	buildPhase = ''
-	  runHook preBuild
+    buildPhase = ''
+      	  runHook preBuild
 
-	  node2nix
+      	  node2nix
 
-	  runHook postBuild
-	'';
+      	  runHook postBuild
+      	'';
 
-	installPhase = ''
-	  runHook preInstall
+    installPhase = ''
+      	  runHook preInstall
 
-	  mkdir $out
-	  cp -rv ./* $out
+      	  mkdir $out
+      	  cp -rv ./* $out
 
-	  runHook postInstall
-	'';
+      	  runHook postInstall
+      	'';
   };
 
-  p = pkgs.callPackage "${extraNodePackages}/default.nix" {};
+  p = pkgs.callPackage "${extraNodePackages}/default.nix" { };
 
-  yarnBuild = stdenv.mkDerivation rec {
-    # I really tried to be smart with mkYarnPackage and such,
-    # But the team behind Karaoke Mugen do such strange things with
-    # Yarn that it is very hard to replicate what they do in a very Nixian way.
-    # So we do it like they tell us to do a manual install, more or less.
-	inherit pname version src;
-	name = "${pname}-yarnbuild";
+  # replaces esbuild's download script with a binary from nixpkgs
+  patchEsbuild = with pkgs; path: version: ''
+    mkdir -p ${path}/node_modules/esbuild/bin
+    jq "del(.scripts.postinstall)" ${path}/node_modules/esbuild/package.json | sponge ${path}/node_modules/esbuild/package.json
+    sed -i 's/${version}/${esbuild.version}/g' ${path}/node_modules/esbuild/lib/main.js
+    ln -s -f ${esbuild}/bin/esbuild ${path}/node_modules/esbuild/bin/esbuild
+  '';
 
-	buildInputs = with pkgs; [
-	  cacert
-	  nodejs
-	  yarn
-	  rsync
-	  python3
-	  git
-      #p.electron-builder
-	];
+  kmRootYarn = stdenv.mkDerivation rec {
+    inherit pname version;
+    name = "${pname}-root-yarn";
 
-	buildPhase = ''
-	  HOME=$(mktemp -d)
-	  #HOME=$out/home
-	  npm config set prefix $HOME/.npm
-	  yarn config set prefix $HOME/.yarn
-	  export NODE_OPTIONS=--max-old_space_size=3072
-	  yarn install
-	  yarn build
-	  yarn installkmfrontend
-	  yarn buildkmfrontend
-	'';
+		src = sources;
 
-	installPhase = ''
-	  mkdir -p $out/app
-	  rsync -var . $out/app
-	'';
+		yarnOfflineCache = pkgs.fetchYarnDeps {
+			yarnLock = src + "/yarn.lock";
+			hash = "sha256-WrR8hnnJ2KCUrYBDjWzE4/y9xlz8+NaF/rhY+I5jddo=";
+		};
+
+    ELECTRON_OVERRIDE_DIST_PATH="${pkgs.electron_31}/bin/";
+
+    nativeBuildInputs = with pkgs; [
+			#yarnConfigHook
+			yarnBuildHook
+			#yarnInstallHook
+      yarn
+      fixup-yarn-lock
+      nodejs
+      node-gyp
+      husky
+      rsync
+      python3
+      esbuild
+      jq
+      moreutils # for sponge
+    ];
+
+    buildInputs = with pkgs; [
+      electron_31
+    ];
+
+    configurePhase = ''
+      runHook preConfigure
+
+      export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+
+      # Use a constant HOME directory
+      mkdir -p /tmp/home
+      export HOME=/tmp/home
+      if [[ -n "$yarnOfflineCache" ]]; then
+          offlineCache="$yarnOfflineCache"
+      fi
+      if [[ -z "$offlineCache" ]]; then
+          echo yarnConfigHook: No yarnOfflineCache or offlineCache were defined\! >&2
+          exit 2
+      fi
+      yarn config --offline set yarn-offline-mirror "$offlineCache"
+
+      # set nodedir to prevent node-gyp from downloading headers
+      # taken from https://nixos.org/manual/nixpkgs/stable/#javascript-tool-specific
+      mkdir -p $HOME/.node-gyp/${pkgs.nodejs.version}
+      echo 9 > $HOME/.node-gyp/${pkgs.nodejs.version}/installVersion
+      ln -sfv ${pkgs.nodejs}/include $HOME/.node-gyp/${pkgs.nodejs.version}
+      export npm_config_nodedir=${pkgs.nodejs}
+
+      # use updated node-gyp. fixes the following error on Darwin:
+      # PermissionError: [Errno 1] Operation not permitted: '/usr/sbin/pkgutil'
+      export npm_config_node_gyp=${pkgs.node-gyp}/lib/node_modules/node-gyp/bin/node-gyp.js
+
+      fixup-yarn-lock yarn.lock
+
+      yarn install \
+          --frozen-lockfile \
+          --force \
+          --production=false \
+          --no-progress \
+          --non-interactive \
+          --offline
+
+      # Make esbuild be able to find our own Electron
+      # path.txt unfortunately does not suffice because it uses relative paths
+
+      # TODO: Check if this is really needed
+      patchShebangs node_modules
+
+      echo "finished yarnConfigHook"
+
+      runHook postConfigure
+    '';
+
+		# kmfrontend is a separate yarn project that will be dealt with in another derivation
+		patchPhase = ''
+			runHook prePatch
+			rm -rf kmfrontend
+			runHook postPatch
+		'';
+
+    # We have to run our configuration ourselves because yarnConfigHook skips package rebuilding,
+    # which is needed e.g. by Electron
+    # configurePhase = ''
+    #   runHook preConfigure
+
+    #   mkdir -p /tmp/home
+    #   export HOME=/tmp/home
+
+    #   yarn config --offline set yarn-offline-mirror "$yarnOfflineCache"
+
+    #   fixup-yarn-lock yarn.lock
+
+    #   yarn install --frozen-lockfile --force --production=false --non-interactive --offline --no-progress
+
+    #   patchShebands node_modules
+
+    #   runHook postConfigure
+    # '';
+
+		#yarnBuildScript = "typecheck";
+
+    installPhase = ''
+			mkdir -p $out/app
+			rsync -var . $out/app
+		'';
+  };
+
+  kmFrontendYarn = stdenv.mkDerivation rec {
+    inherit pname version;
+    name = "${pname}-frontend-yarn";
+
+		src = sources;
+		sourceRoot = "./source/kmfrontend";
+
+		yarnOfflineCache = pkgs.fetchYarnDeps {
+			inherit src;
+			sourceRoot = "./source/kmfrontend";
+			hash = "sha256-P8m8Z605FWjPN0kxL8I7WWFHiAGinFc8Cxb0EOJD5nc=";
+		};
+
+    nativeBuildInputs = with pkgs; [
+			#yarnConfigHook
+			yarnBuildHook
+			#yarnInstallHook
+      nodejs
+      rsync
+      dos2unix
+      yarn
+      fixup-yarn-lock
+    ];
+
+    patchPhase = ''
+      runHook prePatch
+
+      dos2unix vite.config.ts
+      patch --verbose -u -p2 < ${./kmfrontend-rollup-externals.patch}
+      unix2dos vite.config.ts
+
+      runHook postPatch
+    '';
+
+    configurePhase = ''
+      runHook preConfigure
+
+      #export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+
+      # Use a constant HOME directory
+      mkdir -p /tmp/home
+      export HOME=/tmp/home
+      if [[ -n "$yarnOfflineCache" ]]; then
+          offlineCache="$yarnOfflineCache"
+      fi
+      if [[ -z "$offlineCache" ]]; then
+          echo yarnConfigHook: No yarnOfflineCache or offlineCache were defined\! >&2
+          exit 2
+      fi
+      yarn config --offline set yarn-offline-mirror "$offlineCache"
+
+      # set nodedir to prevent node-gyp from downloading headers
+      # taken from https://nixos.org/manual/nixpkgs/stable/#javascript-tool-specific
+      #mkdir -p $HOME/.node-gyp/${pkgs.nodejs.version}
+      #echo 9 > $HOME/.node-gyp/${pkgs.nodejs.version}/installVersion
+      #ln -sfv ${pkgs.nodejs}/include $HOME/.node-gyp/${pkgs.nodejs.version}
+      #export npm_config_nodedir=${pkgs.nodejs}
+
+      # use updated node-gyp. fixes the following error on Darwin:
+      # PermissionError: [Errno 1] Operation not permitted: '/usr/sbin/pkgutil'
+      #export npm_config_node_gyp=${pkgs.node-gyp}/lib/node_modules/node-gyp/bin/node-gyp.js
+
+      fixup-yarn-lock yarn.lock
+
+      yarn install \
+          --frozen-lockfile \
+          --force \
+          --production=false \
+          --no-progress \
+          --non-interactive \
+          --offline
+
+      # Make esbuild be able to find our own Electron
+      #echo "${pkgs.electron_31}/bin/electron" > ./node_modules/electron/path.txt
+
+      # TODO: Check if this is really needed
+      patchShebangs node_modules
+
+      echo "finished yarnConfigHook"
+
+      runHook postConfigure
+    '';
+
+    installPhase = ''
+			mkdir -p $out
+			rsync -var . $out
+		'';
   };
 
   postgresWithModdedConfig = stdenv.mkDerivation {
+    name = pkgs.postgresql.name + "-mk-patched-config";
+    version = pkgs.postgresql.version;
 
-	name = pkgs.postgresql.name + "-mk-patched-config";
-	version = pkgs.postgresql.version;
+    src = pkgs.postgresql;
 
-	src = pkgs.postgresql;
+    nativeBuildInputs = with pkgs; [
+      rsync
+    ];
 
-	nativeBuildInputs = with pkgs; [
-	  rsync
-	];
+    buildInputs = with pkgs; [
+      postgresql
+    ];
 
-	buildInputs = with pkgs; [
-	  postgresql
-	];
+    phases = [ "unpackPhase" "patchPhase" "installPhase" ];
 
-	phases = ["unpackPhase" "patchPhase" "installPhase"];
-
-	# Unpacking phase: copy everything from the original package,
+    # Unpacking phase: copy everything from the original package,
     # but as symlinks to save space
-	unpackPhase = ''
-	  runHook preUnpack
+    unpackPhase = ''
+      			runHook preUnpack
 
-	  cp -rs $src/* .
+      			cp -rs $src/* .
 
-	  runHook postUnpack
-	'';
+      			runHook postUnpack
+      		'';
 
-	# Patch phase: override the files we want to change by replacing
-	# their respective symlinks with actual files
-	patchPhase = ''
-	  runHook prePatch
+    # Patch phase: override the files we want to change by replacing
+    # their respective symlinks with actual files
+    patchPhase = ''
+      			runHook prePatch
 
-	  pushd share/postgresql
+      			pushd share/postgresql
 
-	  CONF=postgresql.conf.sample
+      			CONF=postgresql.conf.sample
 
-	  chmod +w .
-	  cp --remove-destination $(readlink "$CONF") "$CONF"
-	  chmod -w .
-	  echo "unix_socket_directories = '/tmp'" >> "$CONF"
-	  popd
+      			chmod +w .
+      			cp --remove-destination $(readlink "$CONF") "$CONF"
+      			chmod 777 "$CONF"
+      			chmod -w .
+      			echo "unix_socket_directories = '/tmp'" >> "$CONF"
+      			popd
 
-	  runHook postPatch
-	'';
+      			runHook postPatch
+      		'';
 
-	installPhase = ''
-	  runHook preInstall
+    installPhase = ''
+      			runHook preInstall
 
-	  rsync -ar . $out
+      			rsync -ar . $out
 
-	  runHook postInstall
-	'';
+      			runHook postInstall
+      		'';
   };
 
   glWrappedMpv = pkgs.writeShellScriptBin "mpv" ''
-	${nixgl.nixGLMesa}/bin/nixGLMesa ${pkgs.mpv-unwrapped}/bin/mpv "$@"
+    	${nixgl.nixGLMesa}/bin/nixGLMesa ${pkgs.mpv-unwrapped}/bin/mpv "$@"
   '';
 
 in
@@ -203,53 +351,57 @@ stdenv.mkDerivation {
   src = ./.;
 
   nativeBuildInputs = with pkgs; [
-	rsync
-	yarnBuild
+    rsync
+    kmRootYarn 
+		kmFrontendYarn
   ];
 
   buildInputs = with pkgs; [
-	cacert
-	# for Mugen's Postgres use which forces en_US.UTF-8
-	glibcLocales
-	yarn
-	# Runtime dependencies
+    cacert
+    # for Mugen's Postgres use which forces en_US.UTF-8
+    glibcLocales
+    yarn
+    # Runtime dependencies
     postgresWithModdedConfig
-	ffmpeg
-	mpv-unwrapped
-	nixgl.nixGLMesa
-	glWrappedMpv
-	patch
+    ffmpeg
+    mpv-unwrapped
+    nixgl.nixGLMesa
+    glWrappedMpv
+    patch
   ];
 
-  phases = ["installPhase"];
+  phases = [ "installPhase" ];
 
 
   installPhase = ''
-	runHook preInstall
+		runHook preInstall
 
-	rsync -ar --progress ${yarnBuild}/ $out
+		rsync -ar --progress ${kmRootYarn}/ $out
 
-	chmod u+w $out/app
+		chmod u+w $out/app
 
-	rm $out/app/portable
-	touch $out/app/disableAppUpdate
+    # Reunite the root and frontend
+    rsync -ar --progress ${kmFrontendYarn}/ $out/app/kmfrontend
 
-	mkdir -p $out/app/app/bin
-	ln -s ${postgresWithModdedConfig} $out/app/app/bin/postgres
-	ln -s ${pkgs.ffmpeg}/bin/ffmpeg $out/app/app/bin/ffmpeg
-	ln -s ${glWrappedMpv}/bin/mpv $out/app/app/bin/mpv
-	ln -s ${pkgs.patch}/bin/patch $out/app/app/bin/patch
+		rm $out/app/portable
+		touch $out/app/disableAppUpdate
 
-	chmod u-w $out/app
+		mkdir -p $out/app/app/bin
+		ln -s ${postgresWithModdedConfig} $out/app/app/bin/postgres
+		ln -s ${pkgs.ffmpeg}/bin/ffmpeg $out/app/app/bin/ffmpeg
+		ln -s ${glWrappedMpv}/bin/mpv $out/app/app/bin/mpv
+		ln -s ${pkgs.patch}/bin/patch $out/app/app/bin/patch
 
-	runHook postInstall
+		chmod u-w $out/app
+
+		runHook postInstall
 	'';
 
   meta = with lib; {
-	description = "Karaoke Mugen!";
-	homepage = "https://mugen.karaokes.moe/";
+    description = "Karaoke Mugen!";
+    homepage = "https://mugen.karaokes.moe/";
     #license = licenses.mit;
-	platforms = platforms.linux;
+    platforms = platforms.linux;
     #maintainers = with maintainers; [ hedning ];
   };
 }
