@@ -92,7 +92,7 @@ let
 			hash = "sha256-WrR8hnnJ2KCUrYBDjWzE4/y9xlz8+NaF/rhY+I5jddo=";
 		};
 
-    ELECTRON_OVERRIDE_DIST_PATH="${pkgs.electron_31}/bin/";
+    ELECTRON_OVERRIDE_DIST_PATH="${pkgs.electron}/bin/";
 
     nativeBuildInputs = with pkgs; [
 			#yarnConfigHook
@@ -111,7 +111,7 @@ let
     ];
 
     buildInputs = with pkgs; [
-      electron_31
+      electron
     ];
 
     configurePhase = ''
@@ -184,7 +184,7 @@ let
 
     #   yarn install --frozen-lockfile --force --production=false --non-interactive --offline --no-progress
 
-    #   patchShebands node_modules
+    #   patchShebangs node_modules
 
     #   runHook postConfigure
     # '';
@@ -248,6 +248,9 @@ let
       fi
       yarn config --offline set yarn-offline-mirror "$offlineCache"
 
+	  # Required or we run out of memory during the build on e.g. Raspberry Pis
+	  export NODE_OPTIONS="--max_old_space_size=3072"
+
       # set nodedir to prevent node-gyp from downloading headers
       # taken from https://nixos.org/manual/nixpkgs/stable/#javascript-tool-specific
       #mkdir -p $HOME/.node-gyp/${pkgs.nodejs.version}
@@ -270,7 +273,7 @@ let
           --offline
 
       # Make esbuild be able to find our own Electron
-      #echo "${pkgs.electron_31}/bin/electron" > ./node_modules/electron/path.txt
+      #echo "${pkgs.electron}/bin/electron" > ./node_modules/electron/path.txt
 
       # TODO: Check if this is really needed
       patchShebangs node_modules
@@ -282,7 +285,7 @@ let
 
     installPhase = ''
 			mkdir -p $out
-			rsync -var . $out
+			rsync -ar . $out
 		'';
   };
 
@@ -376,12 +379,12 @@ stdenv.mkDerivation {
   installPhase = ''
 		runHook preInstall
 
-		rsync -ar --progress ${kmRootYarn}/ $out
+		rsync -ar ${kmRootYarn}/ $out
 
 		chmod u+w $out/app
 
     # Reunite the root and frontend
-    rsync -ar --progress ${kmFrontendYarn}/ $out/app/kmfrontend
+    rsync -ar ${kmFrontendYarn}/ $out/app/kmfrontend
 
 		rm $out/app/portable
 		touch $out/app/disableAppUpdate
