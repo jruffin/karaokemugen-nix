@@ -4,34 +4,9 @@ let
 
   pkgs = import <nixpkgs> { };
   nixgl = import ./nixGL { };
+
   stdenv = pkgs.stdenv;
   lib = pkgs.lib;
-  /*
-    karaoke = pkgs.mkYarnPackage {
-    name = "${pname}-${version}";
-    src = pkgs.fetchFromGitLab {
-      owner = "karaokemugen";
-      repo = "code/karaokemugen-app";
-      rev = version;
-      hash = "sha256-orKDCHhgBZwXkGxexMI3tc7rurOjRJZN+WDmbdHkcz8=";
-      leaveDotGit = true;
-    };
-
-    extraBuildInputs = with pkgs; [
-      git
-    ];
-
-    postPatch = ''
-    '';
-    buildPhase = ''
-      export HOME=$(mktemp -d)
-      yarn --offline setup
-      '';
-
-    installPhase = ''mv -T deps/ulauncher-prefs/dist $out'';
-    distPhase = "true";
-    };
-  */
   sources = pkgs.fetchFromGitLab {
     owner = "karaokemugen";
     repo = "code/karaokemugen-app";
@@ -81,22 +56,32 @@ let
     ln -s -f ${esbuild}/bin/esbuild ${path}/node_modules/esbuild/bin/esbuild
   '';
 
-  kmRootYarn = stdenv.mkDerivation rec {
+  karaokemugen-yarn = stdenv.mkDerivation rec {
     inherit pname version;
     name = "${pname}-root-yarn";
 
 		src = sources;
 
-		yarnOfflineCache = pkgs.fetchYarnDeps {
-			yarnLock = src + "/yarn.lock";
-			hash = "sha256-WrR8hnnJ2KCUrYBDjWzE4/y9xlz8+NaF/rhY+I5jddo=";
-		};
+		yarnOfflineCache = pkgs.symlinkJoin {
+      name = "offline";
+      paths = [
+        (pkgs.fetchYarnDeps {
+          yarnLock = src + "/yarn.lock";
+          hash = "sha256-WrR8hnnJ2KCUrYBDjWzE4/y9xlz8+NaF/rhY+I5jddo=";
+        })
+        (pkgs.fetchYarnDeps {
+          inherit src;
+          sourceRoot = "./kmfrontend";
+          hash = "sha256-P8m8Z605FWjPN0kxL8I7WWFHiAGinFc8Cxb0EOJD5nc=";
+        })
+      ];
+    };
 
     ELECTRON_OVERRIDE_DIST_PATH="${pkgs.electron}/bin/";
 
     nativeBuildInputs = with pkgs; [
 			#yarnConfigHook
-			yarnBuildHook
+			#yarnBuildHook
 			#yarnInstallHook
       yarn
       fixup-yarn-lock
@@ -113,6 +98,8 @@ let
     buildInputs = with pkgs; [
       electron
     ];
+
+    yarnInstallFlags = "--frozen-lockfile --force --production=false --no-progress --non-interactive";
 
     configurePhase = ''
       runHook preConfigure
@@ -143,14 +130,10 @@ let
       export npm_config_node_gyp=${pkgs.node-gyp}/lib/node_modules/node-gyp/bin/node-gyp.js
 
       fixup-yarn-lock yarn.lock
+      fixup-yarn-lock kmfrontend/yarn.lock
 
-      yarn install \
-          --frozen-lockfile \
-          --force \
-          --production=false \
-          --no-progress \
-          --non-interactive \
-          --offline
+      yarn --offline install $yarnInstallFlags
+      yarn --offline installkmfrontend $yarnInstallFlags
 
       # Make esbuild be able to find our own Electron
       # path.txt unfortunately does not suffice because it uses relative paths
@@ -163,129 +146,18 @@ let
       runHook postConfigure
     '';
 
-		# kmfrontend is a separate yarn project that will be dealt with in another derivation
-		patchPhase = ''
-			runHook prePatch
-			rm -rf kmfrontend
-			runHook postPatch
-		'';
+    buildPhase = ''
+      runHook preBuild
 
-    # We have to run our configuration ourselves because yarnConfigHook skips package rebuilding,
-    # which is needed e.g. by Electron
-    # configurePhase = ''
-    #   runHook preConfigure
+      yarn --offline build
+      yarn --offline buildkmfrontend
 
-    #   mkdir -p /tmp/home
-    #   export HOME=/tmp/home
-
-    #   yarn config --offline set yarn-offline-mirror "$yarnOfflineCache"
-
-    #   fixup-yarn-lock yarn.lock
-
-    #   yarn install --frozen-lockfile --force --production=false --non-interactive --offline --no-progress
-
-    #   patchShebangs node_modules
-
-    #   runHook postConfigure
-    # '';
-
-		#yarnBuildScript = "typecheck";
+      runHook postBuild
+    '';
 
     installPhase = ''
 			mkdir -p $out/app
-			rsync -var . $out/app
-		'';
-  };
-
-  kmFrontendYarn = stdenv.mkDerivation rec {
-    inherit pname version;
-    name = "${pname}-frontend-yarn";
-
-		src = sources;
-		sourceRoot = "./source/kmfrontend";
-
-		yarnOfflineCache = pkgs.fetchYarnDeps {
-			inherit src;
-			sourceRoot = "./source/kmfrontend";
-			hash = "sha256-P8m8Z605FWjPN0kxL8I7WWFHiAGinFc8Cxb0EOJD5nc=";
-		};
-
-    nativeBuildInputs = with pkgs; [
-			#yarnConfigHook
-			yarnBuildHook
-			#yarnInstallHook
-      nodejs
-      rsync
-      dos2unix
-      yarn
-      fixup-yarn-lock
-    ];
-
-    patchPhase = ''
-      runHook prePatch
-
-      dos2unix vite.config.ts
-      patch --verbose -u -p2 < ${./kmfrontend-rollup-externals.patch}
-      unix2dos vite.config.ts
-
-      runHook postPatch
-    '';
-
-    configurePhase = ''
-      runHook preConfigure
-
-      #export ELECTRON_SKIP_BINARY_DOWNLOAD=1
-
-      # Use a constant HOME directory
-      mkdir -p /tmp/home
-      export HOME=/tmp/home
-      if [[ -n "$yarnOfflineCache" ]]; then
-          offlineCache="$yarnOfflineCache"
-      fi
-      if [[ -z "$offlineCache" ]]; then
-          echo yarnConfigHook: No yarnOfflineCache or offlineCache were defined\! >&2
-          exit 2
-      fi
-      yarn config --offline set yarn-offline-mirror "$offlineCache"
-
-	  # Required or we run out of memory during the build on e.g. Raspberry Pis
-	  export NODE_OPTIONS="--max_old_space_size=3072"
-
-      # set nodedir to prevent node-gyp from downloading headers
-      # taken from https://nixos.org/manual/nixpkgs/stable/#javascript-tool-specific
-      #mkdir -p $HOME/.node-gyp/${pkgs.nodejs.version}
-      #echo 9 > $HOME/.node-gyp/${pkgs.nodejs.version}/installVersion
-      #ln -sfv ${pkgs.nodejs}/include $HOME/.node-gyp/${pkgs.nodejs.version}
-      #export npm_config_nodedir=${pkgs.nodejs}
-
-      # use updated node-gyp. fixes the following error on Darwin:
-      # PermissionError: [Errno 1] Operation not permitted: '/usr/sbin/pkgutil'
-      #export npm_config_node_gyp=${pkgs.node-gyp}/lib/node_modules/node-gyp/bin/node-gyp.js
-
-      fixup-yarn-lock yarn.lock
-
-      yarn install \
-          --frozen-lockfile \
-          --force \
-          --production=false \
-          --no-progress \
-          --non-interactive \
-          --offline
-
-      # Make esbuild be able to find our own Electron
-      #echo "${pkgs.electron}/bin/electron" > ./node_modules/electron/path.txt
-
-      # TODO: Check if this is really needed
-      patchShebangs node_modules
-
-      echo "finished yarnConfigHook"
-
-      runHook postConfigure
-    '';
-
-    installPhase = ''
-			mkdir -p $out
-			rsync -ar . $out
+			rsync -ar . $out/app
 		'';
   };
 
@@ -355,8 +227,8 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = with pkgs; [
     rsync
-    kmRootYarn 
-		kmFrontendYarn
+    karaokemugen-yarn 
+		#kmFrontendYarn
   ];
 
   buildInputs = with pkgs; [
@@ -379,12 +251,9 @@ stdenv.mkDerivation {
   installPhase = ''
 		runHook preInstall
 
-		rsync -ar ${kmRootYarn}/ $out
+		rsync -ar ${karaokemugen-yarn}/ $out
 
 		chmod u+w $out/app
-
-    # Reunite the root and frontend
-    rsync -ar ${kmFrontendYarn}/ $out/app/kmfrontend
 
 		rm $out/app/portable
 		touch $out/app/disableAppUpdate
