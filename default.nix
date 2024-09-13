@@ -149,6 +149,9 @@ let
     buildPhase = ''
       runHook preBuild
 
+      # Required or we run out of memory during the build on e.g. Raspberry Pis
+      export NODE_OPTIONS="--max_old_space_size=3072"
+
       yarn --offline build
       yarn --offline buildkmfrontend
 
