@@ -1,6 +1,9 @@
 let
   pname = "karaokemugen";
-  version = "8.0.10";
+  version = "8.0.22";
+  gitHash = "sha256-7ufTJtO03tDGN6oN2jVCKLkoFox0Cizrfa+EGP4lE+M=";
+  kmYarnHash = "sha256-TEoVy9JB0UifE72ahEd2csgM57e/XZd1kl8eiV9QfIk=";
+  kmFrontendYarnHash = "sha256-evl77qf62ZO0Kv4/sH4EVNoWkENxmNee2QQesrnPorU=";
 
   pkgs = import <nixpkgs> { };
   nixgl = import ./nixGL { };
@@ -13,7 +16,7 @@ let
     rev = version;
     fetchSubmodules = true;
     leaveDotGit = true;
-    hash = "sha256-KDRaGgvVHqyUVvOT9WlLd1ZAt1kJ9GWsD5ZedRrifZs=";
+    hash = gitHash;
   };
 
   # replaces esbuild's download script with a binary from nixpkgs
@@ -35,12 +38,12 @@ let
       paths = [
         (pkgs.fetchYarnDeps {
           inherit src;
-          hash = "sha256-WrR8hnnJ2KCUrYBDjWzE4/y9xlz8+NaF/rhY+I5jddo=";
+          hash = kmYarnHash;
         })
         (pkgs.fetchYarnDeps {
           inherit src;
-          sourceRoot = "./kmfrontend";
-          hash = "sha256-P8m8Z605FWjPN0kxL8I7WWFHiAGinFc8Cxb0EOJD5nc=";
+          sourceRoot = "${src}/kmfrontend";
+          hash = kmFrontendYarnHash;
         })
       ];
     };
@@ -250,7 +253,8 @@ let
       makeWrapper ${nixgl.auto.nixGLDefault}/bin/nixGL "$out/bin/karaokemugen" \
         --inherit-argv0 --chdir $out/app --add-flags "${pkgs.electron}/bin/electron ." \
         --prefix PATH : ${lib.makeBinPath propagatedBuildInputs} \
-        --set LOCALE_ARCHIVE $LOCALE_ARCHIVE # to get postgres working
+        --set LOCALE_ARCHIVE $LOCALE_ARCHIVE \
+        --set PGHOST /tmp
       chmod u-w $out
 
       runHook postInstall
