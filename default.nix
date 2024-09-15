@@ -1,5 +1,5 @@
 let
-  pname = "karaoke-mugen";
+  pname = "karaokemugen";
   version = "8.0.10";
 
   pkgs = import <nixpkgs> { };
@@ -17,16 +17,16 @@ let
   };
 
   # replaces esbuild's download script with a binary from nixpkgs
-  patchEsbuild = with pkgs; path: version: ''
-    mkdir -p ${path}/node_modules/esbuild/bin
-    jq "del(.scripts.postinstall)" ${path}/node_modules/esbuild/package.json | sponge ${path}/node_modules/esbuild/package.json
-    sed -i 's/${version}/${esbuild.version}/g' ${path}/node_modules/esbuild/lib/main.js
-    ln -s -f ${esbuild}/bin/esbuild ${path}/node_modules/esbuild/bin/esbuild
-  '';
+  #patchEsbuild = with pkgs; path: version: ''
+  # mkdir -p ${path}/node_modules/esbuild/bin
+  # jq "del(.scripts.postinstall)" ${path}/node_modules/esbuild/package.json | sponge ${path}/node_modules/esbuild/package.json
+  # sed -i 's/${version}/${esbuild.version}/g' ${path}/node_modules/esbuild/lib/main.js
+  # ln -s -f ${esbuild}/bin/esbuild ${path}/node_modules/esbuild/bin/esbuild
+  #';
 
   karaokemugen-yarn = stdenv.mkDerivation rec {
-    inherit pname version;
-    name = "${pname}-root-yarn";
+    inherit version;
+    name = pname + "-yarn";
 
     src = sources;
 
@@ -48,15 +48,11 @@ let
     ELECTRON_OVERRIDE_DIST_PATH = "${pkgs.electron}/bin/";
 
     nativeBuildInputs = with pkgs; [
-      #yarnConfigHook
-      #yarnBuildHook
-      #yarnInstallHook
       yarn
       fixup-yarn-lock
       nodejs
       node-gyp
       husky
-      rsync
       python3
       esbuild
       jq
@@ -67,7 +63,7 @@ let
       electron
     ];
 
-    yarnInstallFlags = "--frozen-lockfile --force --production=false --no-progress --non-interactive";
+    yarnConfigureFlags = "--frozen-lockfile --force --production=false --no-progress --non-interactive";
 
     configurePhase = ''
       runHook preConfigure
@@ -102,8 +98,8 @@ let
       fixup-yarn-lock yarn.lock
       fixup-yarn-lock kmfrontend/yarn.lock
 
-      yarn --offline install $yarnInstallFlags
-      yarn --offline installkmfrontend $yarnInstallFlags
+      yarn --offline install $yarnConfigureFlags
+      yarn --offline installkmfrontend $yarnConfigureFlags
 
       patchShebangs node_modules
       patchShebangs kmfrontend/node_modules
@@ -129,9 +125,22 @@ let
       runHook postBuild
     '';
 
+    yarnInstallFlags = "--frozen-lockfile --force --production=true --no-progress --non-interactive";
+
     installPhase = ''
+      runHook preInstall
+
+      echo "starting yarn installation"
+
+      yarn --offline install $yarnInstallFlags
+      yarn --offline installkmfrontend $yarnInstallFlags
+
       mkdir -p $out/app
-      rsync -ar . $out/app
+      cp -ar . $out/app
+
+      echo "finished yarn installation"
+
+      runHook postInstall
     '';
   };
 
@@ -140,10 +149,6 @@ let
     version = pkgs.postgresql.version;
 
     src = pkgs.postgresql;
-
-    nativeBuildInputs = with pkgs; [
-      rsync
-    ];
 
     propagatedBuildInputs = with pkgs; [
       postgresql
@@ -183,24 +188,28 @@ let
     installPhase = ''
       runHook preInstall
 
-      rsync -ar . $out
+      cp -ar . $out
 
       runHook postInstall
     '';
   };
 
-  glWrappedMpv = pkgs.writeShellScriptBin "mpv" ''
-    ${nixgl.auto.nixGLDefault}/bin/nixGL ${pkgs.mpv-unwrapped}/bin/mpv "$@"
-  '';
+  glWrappedMpv = pkgs.writeShellApplication {
+    name = "mpv";
+
+    runtimeInputs = [ nixgl.auto.nixGLDefault pkgs.mpv-unwrapped ];
+
+    text = ''
+      nixGL mpv "$@"
+    '';
+  };
 
   karaokemugen-app = stdenv.mkDerivation rec {
     inherit pname version;
 
-    src = ./.;
+    src = karaokemugen-yarn;
 
     nativeBuildInputs = with pkgs; [
-      rsync
-      karaokemugen-yarn
       makeWrapper
     ];
 
@@ -212,7 +221,6 @@ let
       electron
       postgresWithModdedConfig
       ffmpeg
-      mpv-unwrapped
       glWrappedMpv
       patch
       nixgl.auto.nixGLDefault
@@ -223,7 +231,7 @@ let
     installPhase = ''
       runHook preInstall
 
-      rsync -ar ${karaokemugen-yarn}/ $out
+      cp -ar $src $out
 
       chmod u+w $out/app
 
