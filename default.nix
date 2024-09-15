@@ -12,41 +12,9 @@ let
     repo = "code/karaokemugen-app";
     rev = version;
     fetchSubmodules = true;
+    leaveDotGit = true;
     hash = "sha256-KDRaGgvVHqyUVvOT9WlLd1ZAt1kJ9GWsD5ZedRrifZs=";
   };
-
-  extraNodePackages = stdenv.mkDerivation rec {
-    name = "${pname}-extra-nodePackages";
-    src = ./.;
-
-    unpackPhase = ''
-      	  echo '[ "electron-builder" ]' > package.json
-      	'';
-
-    buildInputs = with pkgs; [
-      cacert
-      nodePackages.node2nix
-    ];
-
-    buildPhase = ''
-      	  runHook preBuild
-
-      	  node2nix
-
-      	  runHook postBuild
-      	'';
-
-    installPhase = ''
-      	  runHook preInstall
-
-      	  mkdir $out
-      	  cp -rv ./* $out
-
-      	  runHook postInstall
-      	'';
-  };
-
-  p = pkgs.callPackage "${extraNodePackages}/default.nix" { };
 
   # replaces esbuild's download script with a binary from nixpkgs
   patchEsbuild = with pkgs; path: version: ''
@@ -60,13 +28,13 @@ let
     inherit pname version;
     name = "${pname}-root-yarn";
 
-		src = sources;
+    src = sources;
 
-		yarnOfflineCache = pkgs.symlinkJoin {
+    yarnOfflineCache = pkgs.symlinkJoin {
       name = "offline";
       paths = [
         (pkgs.fetchYarnDeps {
-          yarnLock = src + "/yarn.lock";
+          inherit src;
           hash = "sha256-WrR8hnnJ2KCUrYBDjWzE4/y9xlz8+NaF/rhY+I5jddo=";
         })
         (pkgs.fetchYarnDeps {
@@ -77,12 +45,12 @@ let
       ];
     };
 
-    ELECTRON_OVERRIDE_DIST_PATH="${pkgs.electron}/bin/";
+    ELECTRON_OVERRIDE_DIST_PATH = "${pkgs.electron}/bin/";
 
     nativeBuildInputs = with pkgs; [
-			#yarnConfigHook
-			#yarnBuildHook
-			#yarnInstallHook
+      #yarnConfigHook
+      #yarnBuildHook
+      #yarnInstallHook
       yarn
       fixup-yarn-lock
       nodejs
@@ -103,6 +71,8 @@ let
 
     configurePhase = ''
       runHook preConfigure
+
+      echo "starting yarn configure/install"
 
       export ELECTRON_SKIP_BINARY_DOWNLOAD=1
 
@@ -135,13 +105,10 @@ let
       yarn --offline install $yarnInstallFlags
       yarn --offline installkmfrontend $yarnInstallFlags
 
-      # Make esbuild be able to find our own Electron
-      # path.txt unfortunately does not suffice because it uses relative paths
-
-      # TODO: Check if this is really needed
       patchShebangs node_modules
+      patchShebangs kmfrontend/node_modules
 
-      echo "finished yarnConfigHook"
+      echo "finished yarn configure/install"
 
       runHook postConfigure
     '';
@@ -149,19 +116,23 @@ let
     buildPhase = ''
       runHook preBuild
 
+      echo "starting yarn build"
+
       # Required or we run out of memory during the build on e.g. Raspberry Pis
       export NODE_OPTIONS="--max_old_space_size=3072"
 
       yarn --offline build
       yarn --offline buildkmfrontend
 
+      echo "finished yarn build"
+
       runHook postBuild
     '';
 
     installPhase = ''
-			mkdir -p $out/app
-			rsync -ar . $out/app
-		'';
+      mkdir -p $out/app
+      rsync -ar . $out/app
+    '';
   };
 
   postgresWithModdedConfig = stdenv.mkDerivation {
@@ -174,7 +145,7 @@ let
       rsync
     ];
 
-    buildInputs = with pkgs; [
+    propagatedBuildInputs = with pkgs; [
       postgresql
     ];
 
@@ -183,94 +154,100 @@ let
     # Unpacking phase: copy everything from the original package,
     # but as symlinks to save space
     unpackPhase = ''
-      			runHook preUnpack
+      runHook preUnpack
 
-      			cp -rs $src/* .
+      cp -rs $src/* .
 
-      			runHook postUnpack
-      		'';
+      runHook postUnpack
+    '';
 
     # Patch phase: override the files we want to change by replacing
     # their respective symlinks with actual files
     patchPhase = ''
-      			runHook prePatch
+      runHook prePatch
 
-      			pushd share/postgresql
+      pushd share/postgresql
 
-      			CONF=postgresql.conf.sample
+      CONF=postgresql.conf.sample
 
-      			chmod +w .
-      			cp --remove-destination $(readlink "$CONF") "$CONF"
-      			chmod 777 "$CONF"
-      			chmod -w .
-      			echo "unix_socket_directories = '/tmp'" >> "$CONF"
-      			popd
+      chmod +w .
+      cp --remove-destination $(readlink "$CONF") "$CONF"
+      chmod 777 "$CONF"
+      chmod -w .
+      echo "unix_socket_directories = '/tmp'" >> "$CONF"
+      popd
 
-      			runHook postPatch
-      		'';
+      runHook postPatch
+    '';
 
     installPhase = ''
-      			runHook preInstall
+      runHook preInstall
 
-      			rsync -ar . $out
+      rsync -ar . $out
 
-      			runHook postInstall
-      		'';
+      runHook postInstall
+    '';
   };
 
   glWrappedMpv = pkgs.writeShellScriptBin "mpv" ''
-    	${nixgl.nixGLMesa}/bin/nixGLMesa ${pkgs.mpv-unwrapped}/bin/mpv "$@"
+    ${nixgl.auto.nixGLDefault}/bin/nixGL ${pkgs.mpv-unwrapped}/bin/mpv "$@"
   '';
 
-in
-stdenv.mkDerivation {
-  inherit pname version;
+  karaokemugen-app = stdenv.mkDerivation rec {
+    inherit pname version;
 
-  src = ./.;
+    src = ./.;
 
-  nativeBuildInputs = with pkgs; [
-    rsync
-    karaokemugen-yarn 
-		#kmFrontendYarn
-  ];
+    nativeBuildInputs = with pkgs; [
+      rsync
+      karaokemugen-yarn
+      makeWrapper
+    ];
 
-  buildInputs = with pkgs; [
-    cacert
-    # for Mugen's Postgres use which forces en_US.UTF-8
-    glibcLocales
-    yarn
-    # Runtime dependencies
-    postgresWithModdedConfig
-    ffmpeg
-    mpv-unwrapped
-    nixgl.nixGLMesa
-    glWrappedMpv
-    patch
-  ];
+    propagatedBuildInputs = with pkgs; [
+      cacert
+      # for Mugen's Postgres use which forces en_US.UTF-8
+      glibcLocales
+      # Direct runtime dependencies
+      electron
+      postgresWithModdedConfig
+      ffmpeg
+      mpv-unwrapped
+      glWrappedMpv
+      patch
+      nixgl.auto.nixGLDefault
+    ];
 
-  phases = [ "installPhase" ];
+    phases = [ "installPhase" ];
 
+    installPhase = ''
+      runHook preInstall
 
-  installPhase = ''
-		runHook preInstall
+      rsync -ar ${karaokemugen-yarn}/ $out
 
-		rsync -ar ${karaokemugen-yarn}/ $out
+      chmod u+w $out/app
 
-		chmod u+w $out/app
+      rm $out/app/portable
+      touch $out/app/disableAppUpdate
 
-		rm $out/app/portable
-		touch $out/app/disableAppUpdate
+      mkdir -p $out/app/app/bin
+      ln -s ${postgresWithModdedConfig} $out/app/app/bin/postgres
+      ln -s ${pkgs.ffmpeg}/bin/ffmpeg $out/app/app/bin/ffmpeg
+      ln -s ${glWrappedMpv}/bin/mpv $out/app/app/bin/mpv
+      ln -s ${pkgs.patch}/bin/patch $out/app/app/bin/patch
 
-		mkdir -p $out/app/app/bin
-		ln -s ${postgresWithModdedConfig} $out/app/app/bin/postgres
-		ln -s ${pkgs.ffmpeg}/bin/ffmpeg $out/app/app/bin/ffmpeg
-		ln -s ${glWrappedMpv}/bin/mpv $out/app/app/bin/mpv
-		ln -s ${pkgs.patch}/bin/patch $out/app/app/bin/patch
+      chmod u-w $out/app
 
-		chmod u-w $out/app
+      chmod u+w $out
+      makeWrapper ${nixgl.auto.nixGLDefault}/bin/nixGL "$out/bin/karaokemugen" \
+        --inherit-argv0 --chdir $out/app --add-flags "${pkgs.electron}/bin/electron ." \
+        --prefix PATH : ${lib.makeBinPath propagatedBuildInputs} \
+        --set LOCALE_ARCHIVE $LOCALE_ARCHIVE # to get postgres working
+      chmod u-w $out
 
-		runHook postInstall
-	'';
+      runHook postInstall
+    '';
+  };
 
   meta = with lib; {
     description = "Karaoke Mugen!";
@@ -279,4 +256,5 @@ stdenv.mkDerivation {
     platforms = platforms.linux;
     #maintainers = with maintainers; [ hedning ];
   };
-}
+in
+karaokemugen-app
