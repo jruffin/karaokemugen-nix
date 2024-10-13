@@ -1,7 +1,7 @@
 let
   pname = "karaokemugen";
   version = "8.0.22";
-  gitHash = "sha256-7ufTJtO03tDGN6oN2jVCKLkoFox0Cizrfa+EGP4lE+M=";
+  gitHash = "sha256-LtIzVIxUrivufgbCUhlnRnqF3FF8T5KE/NXoHFjp1hE=";
   kmYarnHash = "sha256-TEoVy9JB0UifE72ahEd2csgM57e/XZd1kl8eiV9QfIk=";
   kmFrontendYarnHash = "sha256-evl77qf62ZO0Kv4/sH4EVNoWkENxmNee2QQesrnPorU=";
 
@@ -147,54 +147,24 @@ let
     '';
   };
 
-  postgresWithModdedConfig = stdenv.mkDerivation {
-    name = pkgs.postgresql.name + "-mk-patched-config";
+  postgresWithModdedConfig = pkgs.symlinkJoin {
+    name = pkgs.postgresql.name + "-patched-config";
     version = pkgs.postgresql.version;
-
-    src = pkgs.postgresql;
-
-    propagatedBuildInputs = with pkgs; [
-      postgresql
+    buildInputs = [pkgs.postgresql] ++ pkgs.postgresql.buildInputs;
+    paths = [
+      # Whichever paths come first have priority,
+      # so the derivation that patches the config file
+      # has to come first to be in the final package
+      (pkgs.concatTextFile {
+        name = "patched-postgresql-conf-sample";
+        files = [
+          "${pkgs.postgresql}/share/postgresql/postgresql.conf.sample"
+          (pkgs.writeText "set-unix-socket-directories-to-tmp" "unix_socket_directories = '/tmp'")
+        ];
+        destination = "/share/postgresql/postgresql.conf.sample";
+      })
+      pkgs.postgresql
     ];
-
-    phases = [ "unpackPhase" "patchPhase" "installPhase" ];
-
-    # Unpacking phase: copy everything from the original package,
-    # but as symlinks to save space
-    unpackPhase = ''
-      runHook preUnpack
-
-      cp -rs $src/* .
-
-      runHook postUnpack
-    '';
-
-    # Patch phase: override the files we want to change by replacing
-    # their respective symlinks with actual files
-    patchPhase = ''
-      runHook prePatch
-
-      pushd share/postgresql
-
-      CONF=postgresql.conf.sample
-
-      chmod +w .
-      cp --remove-destination $(readlink "$CONF") "$CONF"
-      chmod 777 "$CONF"
-      chmod -w .
-      echo "unix_socket_directories = '/tmp'" >> "$CONF"
-      popd
-
-      runHook postPatch
-    '';
-
-    installPhase = ''
-      runHook preInstall
-
-      cp -ar . $out
-
-      runHook postInstall
-    '';
   };
 
   glWrappedMpv = pkgs.writeShellApplication {
