@@ -7,6 +7,12 @@ let
 
   pkgs = import <nixpkgs> { };
   nixgl = import ./nixGL { };
+  /*nixgl = import (pkgs.fetchFromGitHub {
+    owner = "jruffin";
+    repo = "nixGL";
+    rev = "main";
+    hash = "sha256-SIRmGyZFEU5EbqlTAcqvuslyV0//1+2PQj+PsCMujDw=";
+  }) { };*/
 
   stdenv = pkgs.stdenv;
   lib = pkgs.lib;
@@ -19,13 +25,35 @@ let
     hash = gitHash;
   };
 
-  # replaces esbuild's download script with a binary from nixpkgs
-  #patchEsbuild = with pkgs; path: version: ''
-  # mkdir -p ${path}/node_modules/esbuild/bin
-  # jq "del(.scripts.postinstall)" ${path}/node_modules/esbuild/package.json | sponge ${path}/node_modules/esbuild/package.json
-  # sed -i 's/${version}/${esbuild.version}/g' ${path}/node_modules/esbuild/lib/main.js
-  # ln -s -f ${esbuild}/bin/esbuild ${path}/node_modules/esbuild/bin/esbuild
-  #';
+  postgresWithModdedConfig = pkgs.symlinkJoin {
+    name = pkgs.postgresql.name + "-patched-config";
+    version = pkgs.postgresql.version;
+    buildInputs = [pkgs.postgresql] ++ pkgs.postgresql.buildInputs;
+    paths = [
+      # Whichever paths come first have priority,
+      # so the derivation that patches the config file
+      # has to come first to be in the final package
+      (pkgs.concatTextFile {
+        name = "patched-postgresql-conf-sample";
+        files = [
+          "${pkgs.postgresql}/share/postgresql/postgresql.conf.sample"
+          (pkgs.writeText "set-unix-socket-directories-to-tmp" "unix_socket_directories = '/tmp'")
+        ];
+        destination = "/share/postgresql/postgresql.conf.sample";
+      })
+      pkgs.postgresql
+    ];
+  };
+
+  glWrappedMpv = pkgs.writeShellApplication {
+    name = "mpv";
+
+    runtimeInputs = [ nixgl.auto.nixGLDefault pkgs.mpv-unwrapped ];
+
+    text = ''
+      nixGL mpv "$@"
+    '';
+  };
 
   karaokemugen-yarn = stdenv.mkDerivation rec {
     inherit version;
@@ -49,6 +77,7 @@ let
     };
 
     ELECTRON_OVERRIDE_DIST_PATH = "${pkgs.electron}/bin/";
+    ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
 
     nativeBuildInputs = with pkgs; [
       yarn
@@ -72,8 +101,6 @@ let
       runHook preConfigure
 
       echo "starting yarn configure/install"
-
-      export ELECTRON_SKIP_BINARY_DOWNLOAD=1
 
       # Use a constant HOME directory
       mkdir -p /tmp/home
@@ -125,21 +152,28 @@ let
 
       echo "finished yarn build"
 
+      echo "starting electron-builder"
+
+      source util/versionUtil.sh
+      yarn --offline run electron-builder -l --dir --publish always \
+        ${lib.optionalString stdenv.hostPlatform.isx86_64 "--x64"} \
+        ${lib.optionalString stdenv.hostPlatform.isAarch64 "--arm64"} \
+        -c.extraMetadata.version=$BUILDVERSION \
+        -c.electronDist=${pkgs.electron.dist} \
+        -c.electronVersion=${pkgs.electron.version}
+
+      echo "finished electron-builder"
+
       runHook postBuild
     '';
-
-    yarnInstallFlags = "--frozen-lockfile --force --production=true --no-progress --non-interactive";
 
     installPhase = ''
       runHook preInstall
 
       echo "starting yarn installation"
 
-      yarn --offline install $yarnInstallFlags
-      yarn --offline installkmfrontend $yarnInstallFlags
-
       mkdir -p $out/app
-      cp -ar . $out/app
+      cp -ar packages/*-unpacked/{locales,resources,*.pak} $out/app
 
       echo "finished yarn installation"
 
@@ -147,35 +181,6 @@ let
     '';
   };
 
-  postgresWithModdedConfig = pkgs.symlinkJoin {
-    name = pkgs.postgresql.name + "-patched-config";
-    version = pkgs.postgresql.version;
-    buildInputs = [pkgs.postgresql] ++ pkgs.postgresql.buildInputs;
-    paths = [
-      # Whichever paths come first have priority,
-      # so the derivation that patches the config file
-      # has to come first to be in the final package
-      (pkgs.concatTextFile {
-        name = "patched-postgresql-conf-sample";
-        files = [
-          "${pkgs.postgresql}/share/postgresql/postgresql.conf.sample"
-          (pkgs.writeText "set-unix-socket-directories-to-tmp" "unix_socket_directories = '/tmp'")
-        ];
-        destination = "/share/postgresql/postgresql.conf.sample";
-      })
-      pkgs.postgresql
-    ];
-  };
-
-  glWrappedMpv = pkgs.writeShellApplication {
-    name = "mpv";
-
-    runtimeInputs = [ nixgl.auto.nixGLDefault pkgs.mpv-unwrapped ];
-
-    text = ''
-      nixGL mpv "$@"
-    '';
-  };
 
   karaokemugen-app = stdenv.mkDerivation rec {
     inherit pname version;
@@ -206,22 +211,19 @@ let
 
       cp -ar $src $out
 
-      chmod u+w $out/app
+      chmod -R u+w $out/app
 
-      rm $out/app/portable
-      touch $out/app/disableAppUpdate
+      mkdir -p $out/app/resources/app/bin
+      ln -s ${postgresWithModdedConfig} $out/app/resources/app/bin/postgres
+      ln -s ${pkgs.ffmpeg}/bin/ffmpeg $out/app/resources/app/bin/ffmpeg
+      ln -s ${glWrappedMpv}/bin/mpv $out/app/resources/app/bin/mpv
+      ln -s ${pkgs.patch}/bin/patch $out/app/resources/app/bin/patch
 
-      mkdir -p $out/app/app/bin
-      ln -s ${postgresWithModdedConfig} $out/app/app/bin/postgres
-      ln -s ${pkgs.ffmpeg}/bin/ffmpeg $out/app/app/bin/ffmpeg
-      ln -s ${glWrappedMpv}/bin/mpv $out/app/app/bin/mpv
-      ln -s ${pkgs.patch}/bin/patch $out/app/app/bin/patch
-
-      chmod u-w $out/app
+      chmod -R u-w $out/app
 
       chmod u+w $out
       makeWrapper ${nixgl.auto.nixGLDefault}/bin/nixGL "$out/bin/karaokemugen" \
-        --inherit-argv0 --chdir $out/app --add-flags "${pkgs.electron}/bin/electron ." \
+        --inherit-argv0 --add-flags "${pkgs.electron}/bin/electron" --add-flags "$out/app/resources/app.asar" \
         --prefix PATH : ${lib.makeBinPath propagatedBuildInputs} \
         --set LOCALE_ARCHIVE $LOCALE_ARCHIVE \
         --set PGHOST /tmp
