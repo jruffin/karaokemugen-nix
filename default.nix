@@ -6,13 +6,13 @@ let
   kmFrontendYarnHash = "sha256-evl77qf62ZO0Kv4/sH4EVNoWkENxmNee2QQesrnPorU=";
 
   pkgs = import <nixpkgs> { };
-  nixgl = import ./nixGL { };
-  /*nixgl = import (pkgs.fetchFromGitHub {
+  #nixgl = import ./nixGL { };
+  nixgl = import (pkgs.fetchFromGitHub {
     owner = "jruffin";
     repo = "nixGL";
     rev = "main";
-    hash = "sha256-SIRmGyZFEU5EbqlTAcqvuslyV0//1+2PQj+PsCMujDw=";
-  }) { };*/
+    hash = "sha256-ZtX7qOQaWUXobgXKuDGfN1oVCkCEzLEys1uJrLUFTHY=";
+  }) { };
 
   stdenv = pkgs.stdenv;
   lib = pkgs.lib;
@@ -199,7 +199,7 @@ let
       electron
       postgresWithModdedConfig
       ffmpeg
-      glWrappedMpv
+      glWrappedMpv # vanilla mpv-unwrapped might work much better on WSL?
       patch
       nixgl.auto.nixGLDefault
     ];
