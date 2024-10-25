@@ -1,9 +1,10 @@
 let
   pname = "karaokemugen";
-  version = "8.0.22";
-  gitHash = "sha256-nrZqehd/wWyf4qbg8rz+dXN5XeMiItr31QYBDX4g0AE=";
-  kmYarnHash = "sha256-TEoVy9JB0UifE72ahEd2csgM57e/XZd1kl8eiV9QfIk=";
-  kmFrontendYarnHash = "sha256-evl77qf62ZO0Kv4/sH4EVNoWkENxmNee2QQesrnPorU=";
+  version = "8.0.29";
+  gitHash = "sha256-Xu5BDsLCHDIit6aeKyeKBmz0WDPWn7iBCnrKPYSIFEc=";
+  gitRev = "f8896792ed27fe06ac64c42603b47f7b14c8cd6c";
+  kmYarnHash = "sha256-1uDnrsa6eZvNwYH+MULguFgZN+rngvJ1BRwCYeCSRMo=";
+  kmFrontendYarnHash = "sha256-fcnJbJdYaaiLkQ0GzqRAsN+5jI2ixJ9cQ6Ia3HO80RQ=";
 
   pkgs = import <nixpkgs> { };
   nixgl = import (pkgs.fetchFromGitHub {
@@ -18,19 +19,11 @@ let
   sources = pkgs.fetchFromGitLab {
     owner = "karaokemugen";
     repo = "code/karaokemugen-app";
-    rev = version;
+    rev = gitRev;
     fetchSubmodules = true;
     leaveDotGit = true;
     hash = gitHash;
   };
-
-  # Karaoke Mugen, as of 8.0.22, uses command-line arguments that have been removed
-  # from mpv 0.39, so use 0.38
-  # Thanks to https://lazamar.co.uk/nix-versions/?channel=nixpkgs-unstable&package=mpv
-  # for helping me find this
-  mpv-038-pkgs = import (builtins.fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/05bbf675397d5366259409139039af8077d695ce.tar.gz";
-  }) {};
 
   postgresWithModdedConfig = pkgs.symlinkJoin {
     name = pkgs.postgresql.name + "-patched-config";
@@ -55,7 +48,7 @@ let
   glWrappedMpv = pkgs.writeShellApplication {
     name = "mpv";
 
-    runtimeInputs = [ nixgl.auto.nixGLDefault mpv-038-pkgs.mpv-unwrapped ];
+    runtimeInputs = [ nixgl.auto.nixGLDefault pkgs.mpv-unwrapped ];
 
     text = ''
       nixGL mpv "$@"
