@@ -66,10 +66,12 @@ let
       paths = [
         (pkgs.fetchYarnDeps {
           inherit src;
+          name = "km-offline";
           hash = kmYarnHash;
         })
         (pkgs.fetchYarnDeps {
           inherit src;
+          name = "kmfrontend-offline";
           sourceRoot = "${src}/kmfrontend";
           hash = kmFrontendYarnHash;
         })
