@@ -1,9 +1,8 @@
 let
   pname = "karaokemugen";
-  version = "8.0.29";
-  gitHash = "sha256-Xu5BDsLCHDIit6aeKyeKBmz0WDPWn7iBCnrKPYSIFEc=";
-  gitRev = "f8896792ed27fe06ac64c42603b47f7b14c8cd6c";
-  kmYarnHash = "sha256-1uDnrsa6eZvNwYH+MULguFgZN+rngvJ1BRwCYeCSRMo=";
+  version = "8.0.37";
+  gitHash = "sha256-vrnm7i0byrMzdBbr4FEJgTrIdyOudmkl8McsVMoITCc=";
+  kmYarnHash = "sha256-ybP77h6dqrsGoQyY5v7bVxlJ4PC/VypSDps3HvwryvU=";
   kmFrontendYarnHash = "sha256-fcnJbJdYaaiLkQ0GzqRAsN+5jI2ixJ9cQ6Ia3HO80RQ=";
 
   pkgs = import <nixpkgs> { };
@@ -19,9 +18,8 @@ let
   sources = pkgs.fetchFromGitLab {
     owner = "karaokemugen";
     repo = "code/karaokemugen-app";
-    rev = gitRev;
+    rev = version;
     fetchSubmodules = true;
-    leaveDotGit = true;
     hash = gitHash;
   };
 
